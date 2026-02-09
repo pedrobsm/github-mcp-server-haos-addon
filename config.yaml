@@ -21,7 +21,7 @@ docker_api: true
 
 options:
   github_token: ""
-  toolsets: "repos,issues,pull_requests,projects,search,code"
+  toolsets: "repos,issues,pull_requests,projects,users,gists"
   port: 8080
   log_level: info
 

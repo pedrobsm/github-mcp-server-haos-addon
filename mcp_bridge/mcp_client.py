@@ -5,7 +5,7 @@ import os
 import json
 import asyncio
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import subprocess
 
 from .models import MCPRequest, MCPResponse
@@ -14,16 +14,85 @@ logger = logging.getLogger(__name__)
 
 
 class MCPClient:
-    """Client to communicate with GitHub MCP Server via subprocess"""
+    """Client to communicate with GitHub MCP Server via persistent subprocess"""
     
     def __init__(self):
         self.github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
         self.toolsets = os.getenv("GITHUB_TOOLSETS", "repos,issues,pull_requests,projects")
         self.binary_path = "/usr/local/bin/github-mcp-server"
+        self.process: Optional[asyncio.subprocess.Process] = None
+        self.initialized = False
+        self.read_task: Optional[asyncio.Task] = None
+        self.response_queue = asyncio.Queue()
+        self.pending_requests = {}
+        
+    async def start(self):
+        """Start the MCP server subprocess"""
+        if self.process is not None:
+            logger.warning("MCP Server process already running")
+            return
+            
+        try:
+            # Prepare environment
+            env = os.environ.copy()
+            env["GITHUB_PERSONAL_ACCESS_TOKEN"] = self.github_token
+            env["GITHUB_TOOLSETS"] = self.toolsets
+            
+            # Command to run binary in stdio mode
+            cmd = [self.binary_path, "stdio"]
+            
+            logger.info("Starting GitHub MCP Server subprocess")
+            
+            # Execute binary with persistent stdin/stdout
+            self.process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env
+            )
+            
+            # Start background task to read responses
+            self.read_task = asyncio.create_task(self._read_responses())
+            
+            logger.info("GitHub MCP Server subprocess started successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to start MCP Server subprocess: {e}")
+            raise
+    
+    async def _read_responses(self):
+        """Background task to read responses from stdout"""
+        try:
+            while self.process and self.process.stdout:
+                line = await self.process.stdout.readline()
+                if not line:
+                    break
+                    
+                try:
+                    response_data = json.loads(line.decode().strip())
+                    response_id = response_data.get("id")
+                    
+                    if response_id in self.pending_requests:
+                        # Resolve pending request
+                        future = self.pending_requests.pop(response_id)
+                        future.set_result(response_data)
+                    else:
+                        logger.warning(f"Received response for unknown request ID: {response_id}")
+                        
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse JSON response: {e}")
+                except Exception as e:
+                    logger.error(f"Error processing response: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error in read_responses task: {e}")
+        finally:
+            logger.info("Response reader task ended")
         
     async def execute(self, request: MCPRequest) -> MCPResponse:
         """
-        Execute MCP command by running GitHub MCP Server binary
+        Execute MCP command via GitHub MCP Server
         
         Args:
             request: MCP request object
@@ -31,6 +100,10 @@ class MCPClient:
         Returns:
             MCPResponse with result or error
         """
+        # Ensure server is started
+        if self.process is None:
+            await self.start()
+            
         try:
             # Prepare JSON-RPC request
             json_rpc_request = {
@@ -40,61 +113,21 @@ class MCPClient:
                 "id": request.id
             }
             
-            # Prepare environment
-            env = os.environ.copy()
-            env["GITHUB_PERSONAL_ACCESS_TOKEN"] = self.github_token
-            env["GITHUB_TOOLSETS"] = self.toolsets
+            logger.info(f"Sending MCP request: {request.method}")
+            logger.debug(f"Request: {json_rpc_request}")
             
-            # Command to run binary in stdio mode
-            cmd = [self.binary_path, "stdio"]
-            
-            logger.debug(f"Running GitHub MCP Server (token hidden)")
-            logger.debug(f"JSON-RPC request: {json_rpc_request}")
-            
-            # Execute binary with MCP request via stdin
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env
-            )
+            # Create future for response
+            future = asyncio.Future()
+            self.pending_requests[request.id] = future
             
             # Send request to MCP server via stdin
-            request_data = json.dumps(json_rpc_request).encode() + b'\n'
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(input=request_data),
-                timeout=30.0  # 30 second timeout
-            )
+            request_data = json.dumps(json_rpc_request) + '\n'
+            self.process.stdin.write(request_data.encode())
+            await self.process.stdin.drain()
             
-            # Check for errors
-            if process.returncode != 0:
-                error_msg = stderr.decode() if stderr else "Unknown error"
-                logger.error(f"GitHub MCP Server process failed: {error_msg}")
-                return MCPResponse(
-                    jsonrpc="2.0",
-                    id=request.id,
-                    error={
-                        "code": -32603,
-                        "message": f"MCP server error: {error_msg}"
-                    }
-                )
-            
-            # Parse response
-            response_text = stdout.decode().strip()
-            logger.debug(f"MCP server raw response: {response_text}")
-            
-            if not response_text:
-                logger.warning("Empty response from MCP server")
-                return MCPResponse(
-                    jsonrpc="2.0",
-                    id=request.id,
-                    result={"status": "no_response"}
-                )
-            
-            # Parse JSON response
+            # Wait for response with timeout
             try:
-                response_data = json.loads(response_text)
+                response_data = await asyncio.wait_for(future, timeout=30.0)
                 
                 # Handle JSON-RPC error response
                 if "error" in response_data:
@@ -111,29 +144,19 @@ class MCPClient:
                     result=response_data.get("result", response_data)
                 )
                 
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse MCP response: {e}")
-                logger.error(f"Response text: {response_text}")
+            except asyncio.TimeoutError:
+                # Clean up pending request
+                self.pending_requests.pop(request.id, None)
+                logger.error("MCP request timed out")
                 return MCPResponse(
                     jsonrpc="2.0",
                     id=request.id,
                     error={
-                        "code": -32700,
-                        "message": f"Parse error: {str(e)}"
+                        "code": -32001,
+                        "message": "Request timeout (30s)"
                     }
                 )
                 
-        except asyncio.TimeoutError:
-            logger.error("MCP request timed out")
-            return MCPResponse(
-                jsonrpc="2.0",
-                id=request.id,
-                error={
-                    "code": -32001,
-                    "message": "Request timeout (30s)"
-                }
-            )
-            
         except Exception as e:
             logger.error(f"Unexpected error executing MCP command: {e}", exc_info=True)
             return MCPResponse(
@@ -147,4 +170,20 @@ class MCPClient:
     
     async def cleanup(self):
         """Cleanup resources"""
-        logger.info("MCP Client cleanup completed")
+        try:
+            if self.read_task:
+                self.read_task.cancel()
+                
+            if self.process and self.process.returncode is None:
+                logger.info("Terminating MCP Server subprocess")
+                self.process.terminate()
+                try:
+                    await asyncio.wait_for(self.process.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning("MCP Server didn't terminate, killing")
+                    self.process.kill()
+                    
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+        finally:
+            logger.info("MCP Client cleanup completed")

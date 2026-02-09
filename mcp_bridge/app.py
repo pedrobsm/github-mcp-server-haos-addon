@@ -57,7 +57,14 @@ async def startup_event():
     toolsets = os.getenv("GITHUB_TOOLSETS", "repos,issues,pull_requests,projects")
     logger.info(f"Configured toolsets: {toolsets}")
     logger.info(f"Token: ghp_***{token[-4:]}")
-    logger.info("MCP Server ready to accept connections")
+    
+    # Start MCP client subprocess
+    try:
+        await mcp_client.start()
+        logger.info("MCP Server ready to accept connections")
+    except Exception as e:
+        logger.error(f"Failed to start MCP client: {e}")
+        raise
 
 
 @app.on_event("shutdown")

@@ -9,8 +9,8 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from models import MCPRequest, MCPResponse, HealthResponse
-from mcp_client import MCPClient
+from .models import MCPRequest, MCPResponse, HealthResponse
+from .mcp_client import MCPClient
 
 # Configure logging
 log_level = os.getenv("LOG_LEVEL", "info").upper()

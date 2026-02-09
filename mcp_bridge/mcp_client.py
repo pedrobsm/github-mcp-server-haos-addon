@@ -8,7 +8,7 @@ import logging
 from typing import Dict, Any
 import subprocess
 
-from models import MCPRequest, MCPResponse
+from .models import MCPRequest, MCPResponse
 
 logger = logging.getLogger(__name__)
 

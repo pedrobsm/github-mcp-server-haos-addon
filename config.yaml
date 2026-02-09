@@ -1,0 +1,40 @@
+# Home Assistant Add-on Configuration
+name: GitHub MCP Server
+version: "1.0.0"
+slug: github_mcp_server
+description: "GitHub Model Context Protocol (MCP) server for remote VSCode development with vibecoding support"
+url: https://github.com/pedrobsm/github-mcp-server-haos-addon
+arch:
+  - aarch64
+  - amd64
+  - armv7
+init: false
+startup: application
+boot: auto
+host_network: false
+hassio_api: true
+hassio_role: default
+homeassistant_api: false
+privileged:
+  - SYS_ADMIN
+docker_api: true
+
+options:
+  github_token: ""
+  toolsets: "repos,issues,pull_requests,projects,search,code"
+  port: 8080
+  log_level: info
+
+schema:
+  github_token: password
+  toolsets: str
+  port: int
+  log_level: list(debug|info|warning|error)
+
+ports:
+  8080/tcp: 8080
+
+ports_description:
+  8080/tcp: GitHub MCP Server API
+
+tmpfs: true

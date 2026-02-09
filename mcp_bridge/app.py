@@ -74,18 +74,13 @@ async def health_check():
     Returns status of the MCP server
     """
     try:
-        # Check if Docker is accessible
-        import subprocess
-        result = subprocess.run(
-            ["docker", "ps"],
-            capture_output=True,
-            timeout=5
-        )
-        docker_ok = result.returncode == 0
+        # Check if GitHub MCP Server binary exists
+        import os.path
+        binary_exists = os.path.isfile("/usr/local/bin/github-mcp-server")
         
         return HealthResponse(
-            status="healthy" if docker_ok else "degraded",
-            docker_accessible=docker_ok,
+            status="healthy" if binary_exists else "degraded",
+            docker_accessible=binary_exists,  # Reusing field for binary check
             version="1.0.0"
         )
     except Exception as e:

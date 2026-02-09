@@ -1,5 +1,5 @@
 """
-MCP Client - Communicates with GitHub MCP Server via Docker
+MCP Client - Communicates with GitHub MCP Server via subprocess
 """
 import os
 import json
@@ -14,16 +14,16 @@ logger = logging.getLogger(__name__)
 
 
 class MCPClient:
-    """Client to communicate with GitHub MCP Server via Docker subprocess"""
+    """Client to communicate with GitHub MCP Server via subprocess"""
     
     def __init__(self):
         self.github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
         self.toolsets = os.getenv("GITHUB_TOOLSETS", "repos,issues,pull_requests,projects")
-        self.image = "ghcr.io/github/github-mcp-server:0.30.3"
+        self.binary_path = "/usr/local/bin/github-mcp-server"
         
     async def execute(self, request: MCPRequest) -> MCPResponse:
         """
-        Execute MCP command by running GitHub MCP Server in Docker container
+        Execute MCP command by running GitHub MCP Server binary
         
         Args:
             request: MCP request object
@@ -40,25 +40,24 @@ class MCPClient:
                 "id": request.id
             }
             
-            # Prepare Docker command
-            docker_cmd = [
-                "docker", "run",
-                "-i",  # Interactive for stdin/stdout
-                "--rm",  # Remove container after execution
-                "-e", f"GITHUB_PERSONAL_ACCESS_TOKEN={self.github_token}",
-                "-e", f"GITHUB_TOOLSETS={self.toolsets}",
-                self.image
-            ]
+            # Prepare environment
+            env = os.environ.copy()
+            env["GITHUB_PERSONAL_ACCESS_TOKEN"] = self.github_token
+            env["GITHUB_TOOLSETS"] = self.toolsets
             
-            logger.debug(f"Running Docker command (token hidden)")
+            # Command to run binary in stdio mode
+            cmd = [self.binary_path, "stdio"]
+            
+            logger.debug(f"Running GitHub MCP Server (token hidden)")
             logger.debug(f"JSON-RPC request: {json_rpc_request}")
             
-            # Execute Docker container with MCP request via stdin
+            # Execute binary with MCP request via stdin
             process = await asyncio.create_subprocess_exec(
-                *docker_cmd,
+                *cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=env
             )
             
             # Send request to MCP server via stdin
@@ -71,7 +70,7 @@ class MCPClient:
             # Check for errors
             if process.returncode != 0:
                 error_msg = stderr.decode() if stderr else "Unknown error"
-                logger.error(f"Docker process failed: {error_msg}")
+                logger.error(f"GitHub MCP Server process failed: {error_msg}")
                 return MCPResponse(
                     jsonrpc="2.0",
                     id=request.id,

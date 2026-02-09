@@ -22,15 +22,13 @@ bashio::log.info "Starting GitHub MCP Server on port ${PORT}..."
 bashio::log.info "Toolsets: ${TOOLSETS}"
 bashio::log.info "Log level: ${LOG_LEVEL}"
 
-# Pull GitHub MCP Server Docker image if needed
-bashio::log.info "Checking GitHub MCP Server Docker image..."
-if ! docker image inspect ghcr.io/github/github-mcp-server:0.30.3 >/dev/null 2>&1; then
-    bashio::log.info "Pulling Docker image..."
-    docker pull ghcr.io/github/github-mcp-server:0.30.3 || {
-        bashio::log.error "Failed to pull Docker image"
-        exit 1
-    }
+# Verify binary exists
+if [ ! -f "/usr/local/bin/github-mcp-server" ]; then
+    bashio::log.error "GitHub MCP Server binary not found!"
+    exit 1
 fi
+
+bashio::log.info "GitHub MCP Server binary ready"
 
 # Start FastAPI application
 exec python3 -u -m uvicorn mcp_bridge.app:app --host 0.0.0.0 --port "${PORT}" --log-level "${LOG_LEVEL}"

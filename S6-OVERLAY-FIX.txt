@@ -1,0 +1,155 @@
+╔═══════════════════════════════════════════════════════════════════════╗
+║                                                                       ║
+║  ✅ CORREÇÃO S6-OVERLAY APLICADA - GitHub MCP Server Add-on          ║
+║                                                                       ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+🐛 PROBLEMA
+═══════════════════════════════════════════════════════════════════════
+Erro: s6-overlay-suexec: fatal: can only run as pid 1
+
+Causa: O add-on tentava executar scripts diretamente sem usar o init
+       system s6-overlay que as imagens base do Home Assistant requerem.
+
+✅ SOLUÇÃO IMPLEMENTADA
+═══════════════════════════════════════════════════════════════════════
+
+Criada estrutura s6-overlay completa conforme padrão Home Assistant:
+
+📁 Nova Estrutura de Ficheiros
+───────────────────────────────────────────────────────────────────────
+
+rootfs/
+└── etc/
+    ├── cont-init.d/               ← Scripts que executam ANTES dos serviços
+    │   └── 00-init.sh            ← Valida config, baixa imagem Docker
+    └── services.d/               ← Serviços geridos pelo s6-overlay
+        └── github-mcp-server/
+            ├── run               ← Inicia o serviço MCP
+            └── finish            ← Cleanup quando serviço para
+
+🔄 Fluxo de Inicialização
+───────────────────────────────────────────────────────────────────────
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 1. Container inicia → s6-overlay (PID 1)                            │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   │
+┌──────────────────────────────────▼──────────────────────────────────┐
+│ 2. cont-init.d/00-init.sh                                           │
+│    • Lê /data/options.json                                          │
+│    • Valida GitHub token                                            │
+│    • Verifica formato token (ghp_* ou github_pat_*)                 │
+│    • Pull ghcr.io/github/github-mcp-server:0.30.3                   │
+│    • Log configuração (sem expor token)                             │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   │
+┌──────────────────────────────────▼──────────────────────────────────┐
+│ 3. services.d/github-mcp-server/run                                 │
+│    • Executa: /app/run.sh                                           │
+│    • Com: with-contenv (variáveis de ambiente)                      │
+│    • User: root (s6-setuidgid root)                                 │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   │
+┌──────────────────────────────────▼──────────────────────────────────┐
+│ 4. /app/run.sh                                                      │
+│    • Lê configuração via bashio::config                             │
+│    • Exporta variáveis de ambiente                                  │
+│    • cd /app/mcp_bridge                                             │
+│    • exec python3 -u app.py                                         │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   │
+┌──────────────────────────────────▼──────────────────────────────────┐
+│ 5. FastAPI (app.py)                                                 │
+│    • Uvicorn HTTP server: 0.0.0.0:8080                              │
+│    • Endpoints: /health, /mcp/execute, /docs, etc.                  │
+│    • MCP Client via Docker subprocess                               │
+└─────────────────────────────────────────────────────────────────────┘
+
+🔧 Alterações Técnicas
+═══════════════════════════════════════════════════════════════════════
+
+1. Dockerfile:
+   ✅ Instalado bashio (biblioteca Home Assistant)
+   ✅ Copiado rootfs/ para estrutura s6
+   ✅ Removido CMD (s6 gerencia automaticamente)
+   ✅ Scripts em cont-init.d e services.d marcados como executáveis
+
+2. config.json:
+   ✅ docker_api: true (acesso ao Docker)
+   ✅ Sem referência a "image" (build local)
+   ✅ tmpfs configurado
+
+3. run.sh:
+   ✅ Shebang: #!/usr/bin/with-contenv bashio
+   ✅ Usa bashio::config para ler configuração
+   ✅ Simplificado - apenas inicia FastAPI
+   ✅ Validação movida para cont-init.d
+
+4. Novos scripts s6:
+   ✅ cont-init.d/00-init.sh - Setup e validação
+   ✅ services.d/.../run - Inicia serviço
+   ✅ services.d/.../finish - Cleanup
+
+📋 REINSTALAÇÃO NECESSÁRIA
+═══════════════════════════════════════════════════════════════════════
+
+⚠️  A estrutura mudou significativamente. É NECESSÁRIO:
+
+1. Desinstalar versão antiga:
+   Supervisor → Add-ons → GitHub MCP Server → Uninstall
+
+2. Recarregar add-ons:
+   Supervisor → Add-on Store → ⋮ → Check for updates
+
+3. Reinstalar:
+   Local add-ons → GitHub MCP Server → Install
+   ⏳ Aguardar build (~3-5 min)
+
+4. Configurar token:
+   Configuration tab → github_token: ghp_...
+
+5. Iniciar:
+   Info tab → START
+
+🧪 LOGS ESPERADOS (Sucesso)
+═══════════════════════════════════════════════════════════════════════
+
+[INFO] Initializing GitHub MCP Server...
+[INFO] Configuration validated successfully
+[INFO] Toolsets: repos,issues,pull_requests,projects
+[INFO] Port: 8080
+[INFO] Log Level: info
+[INFO] Pulling GitHub MCP Server Docker image...
+[INFO] Initialization complete
+[INFO] Starting FastAPI HTTP wrapper on port 8080...
+[INFO] Starting server process [XX]
+[INFO] Application startup complete.
+[INFO] Uvicorn running on http://0.0.0.0:8080
+
+✅ TESTE DE FUNCIONAMENTO
+═══════════════════════════════════════════════════════════════════════
+
+$ curl http://localhost:8080/health
+
+Esperado:
+{
+  "status": "healthy",
+  "docker_accessible": true,
+  "version": "1.0.0"
+}
+
+📚 DOCUMENTAÇÃO ATUALIZADA
+═══════════════════════════════════════════════════════════════════════
+
+• BUGFIX.md ............ Detalhes técnicos completos ✅
+• S6-OVERLAY-FIX.txt ... Este ficheiro (resumo visual) ✅
+• reinstall-guide.sh ... Script de reinstalação interativo
+
+═══════════════════════════════════════════════════════════════════════
+
+Data: 9 de Fevereiro de 2026
+Versão: 1.0.0 (corrigida com s6-overlay)
+Status: ✅ PRONTO PARA REINSTALAÇÃO
+
+═══════════════════════════════════════════════════════════════════════

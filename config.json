@@ -1,0 +1,41 @@
+{
+  "name": "GitHub MCP Server",
+  "version": "1.0.0",
+  "slug": "github-mcp-server",
+  "description": "GitHub Model Context Protocol (MCP) server for remote VSCode development with vibecoding support",
+  "url": "https://github.com/pedrobsm/github-mcp-server-haos-addon",
+  "arch": ["amd64", "aarch64", "armv7"],
+  "startup": "application",
+  "boot": "auto",
+  "ports": {
+    "8080/tcp": 8080
+  },
+  "ports_description": {
+    "8080/tcp": "MCP Server HTTP API"
+  },
+  "options": {
+    "github_token": "",
+    "toolsets": "repos,issues,pull_requests,projects",
+    "port": 8080,
+    "log_level": "info"
+  },
+  "schema": {
+    "github_token": "password",
+    "toolsets": "str",
+    "port": "port",
+    "log_level": "list(debug|info|warning|error)"
+  },
+  "environment": {
+    "GITHUB_PERSONAL_ACCESS_TOKEN": "github_token"
+  },
+  "panel_icon": "mdi:github",
+  "panel_title": "GitHub MCP Server",
+  "map": ["config:rw"],
+  "tmpfs": "size=64m,uid=0,rw",
+  "homeassistant_api": false,
+  "hassio_api": false,
+  "docker_api": true,
+  "privileged": [],
+  "full_access": false,
+  "host_network": false
+}

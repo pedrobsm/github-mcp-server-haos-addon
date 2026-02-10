@@ -57,8 +57,58 @@ class MCPClient:
             
             logger.info("GitHub MCP Server subprocess started successfully")
             
+            # Initialize MCP session automatically
+            await self._initialize_session()
+            
         except Exception as e:
             logger.error(f"Failed to start MCP Server subprocess: {e}")
+            raise
+    
+    async def _initialize_session(self):
+        """Initialize the MCP session (handshake)"""
+        try:
+            logger.info("Initializing MCP session")
+            
+            # Send initialize request
+            init_request = {
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "github-mcp-server-addon", "version": "1.0.0"}
+                },
+                "id": "init-1"
+            }
+            
+            future = asyncio.Future()
+            self.pending_requests["init-1"] = future
+            
+            request_data = json.dumps(init_request) + '\n'
+            self.process.stdin.write(request_data.encode())
+            await self.process.stdin.drain()
+            
+            # Wait for initialize response
+            init_response = await asyncio.wait_for(future, timeout=10.0)
+            logger.info("MCP initialize successful")
+            
+            # Send initialized notification (no ID needed for notifications)
+            initialized_notification = {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            }
+            
+            notif_data = json.dumps(initialized_notification) + '\n'
+            self.process.stdin.write(notif_data.encode())
+            await self.process.stdin.drain()
+            
+            await asyncio.sleep(0.5)  # Give server time to process
+            
+            self.initialized = True
+            logger.info("MCP session initialized and ready")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize MCP session: {e}")
             raise
     
     async def _read_responses(self):
@@ -72,6 +122,12 @@ class MCPClient:
                 try:
                     response_data = json.loads(line.decode().strip())
                     response_id = response_data.get("id")
+                    
+                    if response_id is None:
+                        # This is a notification (no ID), log and continue
+                        method = response_data.get("method", "unknown")
+                        logger.debug(f"Received MCP notification: {method}")
+                        continue
                     
                     if response_id in self.pending_requests:
                         # Resolve pending request

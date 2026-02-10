@@ -115,7 +115,8 @@ class MCPClient:
         """Background task to read responses from stdout"""
         try:
             while self.process and self.process.stdout:
-                line = await self.process.stdout.readline()
+                # Use large limit for tools/list which can return many tools
+                line = await self.process.stdout.readline(limit=10*1024*1024)  # 10MB limit
                 if not line:
                     break
                     
